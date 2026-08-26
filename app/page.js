@@ -87,6 +87,9 @@ const VEGETABLES = [
   { id: 68, en: "Baby Corn", ta: "பேபி கார்ன் (Baby Corn)", category: "Others" },
   { id: 69, en: "Zucchini", ta: "சீமைச்சுரைக்காய் (Seemaisuraikkay)", category: "Others" },
   { id: 70, en: "Artichoke", ta: "ஆர்ட்டிச்சோக்", category: "Others" },
+  { id: 71, en: "Chicken", ta: "கோழிக்கறி (Kozhikkari)", category: "Others" },
+  { id: 72, en: "Mutton", ta: "ஆட்டுக்கறி (Aattukkari)", category: "Others" },
+  { id: 73, en: "Fish", ta: "மீன் (Meen)", category: "Others" },
 ];
 
 const CATEGORIES = [...new Set(VEGETABLES.map(v => v.category))];
