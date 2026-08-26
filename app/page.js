@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 const VEGETABLES = [
   // Leafy Greens
@@ -100,9 +100,19 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
-  const [sending, setSending] = useState(false);
+  const [showSend, setShowSend] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [platform, setPlatform] = useState({ mobile: false, canShare: false });
   const [toast, setToast] = useState(null);
   const [expandedNotes, setExpandedNotes] = useState({});
+
+  // navigator isn't available while the static export is prerendered, so detect on mount.
+  useEffect(() => {
+    setPlatform({
+      mobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+      canShare: typeof navigator.share === "function"
+    });
+  }, []);
 
   const setPref = (id, value) => {
     setPrefs(p => ({ ...p, [id]: p[id] === value ? null : value }));
@@ -166,27 +176,110 @@ export default function Home() {
     return body;
   };
 
-  const handleSend = () => {
+  // Gmail's mobile web redirects ?view=cm to the legacy inbox (/mail/mu/mp/...) and throws
+  // away to/su/body, so that URL can never prefill a draft on a phone. Everything below
+  // routes around it: mailto: hands off to the installed Gmail/mail app, the native share
+  // sheet is the backup, and the clipboard is the always-works floor.
+  const SUBJECT = "My Vegetable Preferences List";
+
+  // Mail apps silently truncate long mailto: URLs. Tamil letters and emoji cost 9 chars each
+  // once percent-encoded, so the pretty body blows past any safe limit almost immediately.
+  const MAILTO_MAX = 1800;
+
+  const buildCompactBody = () => {
+    const line = v => `- ${v.en}${notes[v.id] ? ` (${notes[v.id]})` : ""}`;
+    const liked = VEGETABLES.filter(v => prefs[v.id] === "like");
+    const disliked = VEGETABLES.filter(v => prefs[v.id] === "dislike");
+    const noted = VEGETABLES.filter(v => notes[v.id] && !prefs[v.id]);
+
+    let body = "MY VEGETABLE PREFERENCES\n\n";
+    if (liked.length) body += `LIKED:\n${liked.map(line).join("\n")}\n\n`;
+    if (disliked.length) body += `DISLIKED:\n${disliked.map(line).join("\n")}\n\n`;
+    if (noted.length) body += `NOTES ONLY:\n${noted.map(line).join("\n")}\n`;
+    return body;
+  };
+
+  // Slicing mid-emoji leaves a lone surrogate and encodeURIComponent throws on it.
+  const sliceSafe = (text, n) => {
+    const out = text.slice(0, n);
+    return /[\uD800-\uDBFF]$/.test(out) ? out.slice(0, -1) : out;
+  };
+
+  const buildMailtoUrl = () => {
+    let body = buildMailBody();
+    if (encodeURIComponent(body).length > MAILTO_MAX) body = buildCompactBody();
+    if (encodeURIComponent(body).length > MAILTO_MAX) {
+      const tail = "\n\n[Trimmed to fit your mail app - the full list is on your clipboard, paste it here.]";
+      const budget = MAILTO_MAX - encodeURIComponent(tail).length;
+      let cut = body.length;
+      while (cut > 0 && encodeURIComponent(sliceSafe(body, cut)).length > budget) cut -= 20;
+      body = sliceSafe(body, Math.max(cut, 0)) + tail;
+    }
+    return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(SUBJECT)}&body=${encodeURIComponent(body)}`;
+  };
+
+  const fullText = () => `${SUBJECT}\n\n${buildMailBody()}`;
+
+  const copyBody = async () => {
+    const text = fullText();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const openSend = () => {
     if (!email) {
       setToast("Please enter your email address");
       setTimeout(() => setToast(null), 3000);
       return;
     }
-    const recipient = encodeURIComponent(email);
-    const subject = encodeURIComponent("My Vegetable Preferences List");
-    const body = encodeURIComponent(buildMailBody());
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const gmailComposeUrl = `https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1&to=${recipient}&su=${subject}&body=${body}`;
-
-    if (isMobile) {
-      // Use Gmail's mobile compose route instead of the legacy mobile inbox.
-      window.location.href = gmailComposeUrl;
-    } else {
-      window.open(gmailComposeUrl, "_blank");
-    }
-    setToast("Opening a Gmail draft...");
-    setTimeout(() => setToast(null), 3000);
+    setCopied(false);
+    setShowSend(true);
   };
+
+  const openMailApp = async () => {
+    await copyBody(); // so a trimmed draft can still be completed with a paste
+    window.location.href = buildMailtoUrl();
+    setToast("Opening your mail app - full list copied too");
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const openGmailWeb = () => {
+    const url = `https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1&to=${encodeURIComponent(email)}` +
+      `&su=${encodeURIComponent(SUBJECT)}&body=${encodeURIComponent(buildMailBody())}`;
+    window.open(url, "_blank", "noopener");
+    setShowSend(false);
+  };
+
+  const shareBody = async () => {
+    try {
+      await navigator.share({ title: SUBJECT, text: fullText() });
+      setShowSend(false);
+    } catch {
+      // share sheet dismissed - leave the sheet open so another option can be picked
+    }
+  };
+
+  const sheetBtn = (primary) => ({
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+    width: "100%", padding: "13px 14px", borderRadius: 10, marginBottom: 9,
+    fontSize: 14.5, fontWeight: 700, fontFamily: "inherit",
+    border: primary ? "none" : "1.5px solid #c8dcc8",
+    background: primary ? "#2d6a2d" : "#fff",
+    color: primary ? "#fff" : "#2d6a2d",
+    cursor: "pointer", boxSizing: "border-box"
+  });
 
   const grouped = useMemo(() => {
     const map = {};
@@ -366,7 +459,7 @@ export default function Home() {
             }}
           />
           <button
-            onClick={handleSend}
+            onClick={openSend}
             disabled={filledCount === 0}
             style={{
               padding: "10px 22px", borderRadius: 8, border: "none",
@@ -384,6 +477,94 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Send Sheet — Gmail's mobile web can't be prefilled, so offer routes that can */}
+      {showSend && (
+        <div
+          onClick={() => setShowSend(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(10,30,10,0.45)", zIndex: 200,
+            display: "flex", alignItems: "flex-end", justifyContent: "center"
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#fff", width: "100%", maxWidth: 780, boxSizing: "border-box",
+              borderRadius: "16px 16px 0 0", padding: "16px 16px 22px",
+              maxHeight: "88vh", overflowY: "auto", boxShadow: "0 -6px 30px rgba(0,40,0,0.25)"
+            }}
+          >
+            <div style={{ width: 38, height: 4, borderRadius: 2, background: "#d8e8d8", margin: "0 auto 14px" }} />
+
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1a3a1a", marginBottom: 3 }}>
+              Send to {email}
+            </div>
+            <div style={{ fontSize: 12.5, color: "#5a7a5a", marginBottom: 16 }}>
+              {filledCount} vegetables rated · pick how you'd like to send it
+            </div>
+
+            {platform.mobile ? (
+              <>
+                <button onClick={openMailApp} style={sheetBtn(true)}>
+                  📧 Open Gmail / mail app
+                </button>
+                {platform.canShare && (
+                  <button onClick={shareBody} style={sheetBtn(false)}>
+                    📤 Share to an app
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <button onClick={openGmailWeb} style={sheetBtn(true)}>
+                  📧 Open Gmail in a new tab
+                </button>
+                <button onClick={openMailApp} style={sheetBtn(false)}>
+                  ✉️ Open my default mail app
+                </button>
+              </>
+            )}
+
+            <button onClick={copyBody} style={sheetBtn(false)}>
+              {copied ? "✅ Copied to clipboard" : "📋 Copy the whole list"}
+            </button>
+
+            <div style={{ fontSize: 11.5, color: "#8aaa8a", lineHeight: 1.5, margin: "12px 0 10px" }}>
+              Long lists get trimmed by some mail apps. The full text is copied to your clipboard
+              whenever you open a draft — just paste it in if anything is missing.
+            </div>
+
+            <details>
+              <summary style={{ fontSize: 12.5, color: "#3a6a3a", cursor: "pointer", fontWeight: 600 }}>
+                Preview / select the text
+              </summary>
+              <textarea
+                readOnly
+                value={fullText()}
+                onFocus={e => e.target.select()}
+                rows={9}
+                style={{
+                  width: "100%", marginTop: 8, padding: "10px 12px", borderRadius: 8,
+                  border: "1.5px solid #d8e8d8", fontSize: 12.5, background: "#fafdf7",
+                  color: "#1a3a1a", boxSizing: "border-box", fontFamily: "inherit", resize: "vertical"
+                }}
+              />
+            </details>
+
+            <button
+              onClick={() => setShowSend(false)}
+              style={{
+                width: "100%", padding: "11px", marginTop: 12, borderRadius: 10, border: "none",
+                background: "transparent", color: "#8aaa8a", fontSize: 13.5, fontWeight: 600,
+                cursor: "pointer", fontFamily: "inherit"
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
