@@ -169,10 +169,14 @@ export default function Home() {
       setTimeout(() => setToast(null), 3000);
       return;
     }
+    const recipient = encodeURIComponent(email);
     const subject = encodeURIComponent("My Vegetable Preferences List");
     const body = encodeURIComponent(buildMailBody());
-    window.open(`mailto:${email}?subject=${subject}&body=${body}`, "_blank");
-    setToast("Opening your mail client...");
+    window.open(
+      `https://mail.google.com/mail/?view=cm&fs=1&to=${recipient}&su=${subject}&body=${body}`,
+      "_blank"
+    );
+    setToast("Opening a Gmail draft...");
     setTimeout(() => setToast(null), 3000);
   };
 
