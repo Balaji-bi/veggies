@@ -175,10 +175,15 @@ export default function Home() {
     const recipient = encodeURIComponent(email);
     const subject = encodeURIComponent("My Vegetable Preferences List");
     const body = encodeURIComponent(buildMailBody());
-    window.open(
-      `https://mail.google.com/mail/?view=cm&fs=1&to=${recipient}&su=${subject}&body=${body}`,
-      "_blank"
-    );
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const gmailComposeUrl = `https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1&to=${recipient}&su=${subject}&body=${body}`;
+
+    if (isMobile) {
+      // Use Gmail's mobile compose route instead of the legacy mobile inbox.
+      window.location.href = gmailComposeUrl;
+    } else {
+      window.open(gmailComposeUrl, "_blank");
+    }
     setToast("Opening a Gmail draft...");
     setTimeout(() => setToast(null), 3000);
   };
